@@ -66,7 +66,7 @@ import {
     createModelProvider,
     generateKey,
 } from './instanceFactory';
-import { createResourceEditorModel, getCellGroups } from './resources/utils';
+import { getCellGroups } from './resources/utils';
 import { ExpressionUtils } from './expressionUtils';
 import { validateDayHours } from '../../renovation/ui/scheduler/view_model/to_test/views/utils/base';
 import { renderAppointments } from './appointments/render';
@@ -1215,10 +1215,7 @@ class Scheduler extends Widget {
 
     createAppointmentForm() {
         const scheduler = {
-            createResourceEditorModel: () => {
-                const resourceManager = this.fire('getResourceManager');
-                return createResourceEditorModel(resourceManager.getResources(), resourceManager.loadedResources);
-            },
+            getResourceManager: () => this.fire('getResourceManager'),
             getDataAccessors: () => this._dataAccessors,
             createComponent: (element, component, options) => this._createComponent(element, component, options),
 

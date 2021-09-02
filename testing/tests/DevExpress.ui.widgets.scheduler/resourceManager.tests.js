@@ -1,14 +1,6 @@
 import $ from 'jquery';
 import { ResourceManager } from 'ui/scheduler/resources/resourceManager';
-import {
-    getWrappedDataSource,
-    createResourcesTree,
-    createResourceEditorModel,
-    getPaintedResources,
-    filterResources,
-    getOrLoadResourceItem,
-    getResourceColor
-} from 'ui/scheduler/resources/utils';
+import { getWrappedDataSource, createResourcesTree } from 'ui/scheduler/resources/utils';
 import { DataSource } from 'data/data_source/data_source';
 import CustomStore from 'data/custom_store';
 
@@ -141,7 +133,7 @@ QUnit.test('Resources dataSource should not be wrapped if it\'s instance of the 
         dataSource: dataSource
     }]);
 
-    getOrLoadResourceItem(this.instance.getResources(), this.instance.resourceLoaderMap, 'roomId', 1).done(function() {
+    this.instance.getResourceDataByValue('roomId', 1).done(function() {
         assert.equal(dataSource.items().length, testData.rooms.length, 'DS items are OK');
         done();
     });
@@ -155,8 +147,7 @@ QUnit.test('Set/Get resources', function(assert) {
 
 QUnit.test('Get editors for resources', function(assert) {
     this.createInstance(resourceData);
-
-    const editors = createResourceEditorModel(this.instance.getResources(), this.instance.loadedResources);
+    const editors = this.instance.getEditors();
 
     assert.equal(editors[0].dataField, 'roomId');
     assert.equal(editors[0].editorType, 'dxSelectBox');
@@ -185,15 +176,14 @@ QUnit.test('Resource editor should always have label', function(assert) {
         dataSource: testData.rooms
     }]);
 
-    const editors = createResourceEditorModel(this.instance.getResources(), this.instance.loadedResources);
-    assert.equal(editors[0].label.text, 'roomId');
+    assert.equal(this.instance.getEditors()[0].label.text, 'roomId');
 });
 
 QUnit.test('Get resource by field name and value', function(assert) {
     this.createInstance(resourceData);
     const done = assert.async();
 
-    getOrLoadResourceItem(this.instance.getResources(), this.instance.resourceLoaderMap, 'roomId', 2).done(function(data) {
+    this.instance.getResourceDataByValue('roomId', 2).done(function(data) {
         assert.deepEqual(data, resourceData[0].dataSource[1], 'Resource was found');
         done();
     });
@@ -434,7 +424,7 @@ QUnit.test('Get resources data with long resource dataSource', function(assert) 
         promiseData.load();
     });
 
-    getOrLoadResourceItem(this.instance.getResources(), this.instance.resourceLoaderMap, 'roomId', 2).done(function(data) {
+    this.instance.getResourceDataByValue('roomId', 2).done(function(data) {
         assert.deepEqual(data, {
             id: 2,
             text: 'Room2',
@@ -448,7 +438,7 @@ QUnit.test('Get color for resource', function(assert) {
     this.createInstance(resourceData);
     const done = assert.async();
 
-    getResourceColor(this.instance.getResources(), this.instance.resourceLoaderMap, 'ownerId', 2).done(function(color) {
+    this.instance.getResourceColor('ownerId', 2).done(function(color) {
         assert.equal(color, testData.owners[1].color, 'Color is OK');
         done();
     });
@@ -471,7 +461,7 @@ QUnit.test('Get color for resource with colorExpr', function(assert) {
     this.createInstance([roomData]);
     const done = assert.async();
 
-    getResourceColor(this.instance.getResources(), this.instance.resourceLoaderMap, 'roomId', 1).done(function(color) {
+    this.instance.getResourceColor('roomId', 1).done(function(color) {
         assert.equal(color, roomData.dataSource[0].color1, 'Color is OK');
         done();
     });
@@ -494,7 +484,7 @@ QUnit.test('Get color for resource with valueExpr', function(assert) {
     const done = assert.async();
 
     this.instance.loadResources(['roomId']).done($.proxy(function(groups) {
-        getResourceColor(this.instance.getResources(), this.instance.resourceLoaderMap, 'roomId', 1).done(function(color) {
+        this.instance.getResourceColor('roomId', 1).done(function(color) {
             assert.equal(color, roomData.dataSource[0].color, 'Color is OK');
             done();
         });
@@ -505,7 +495,7 @@ QUnit.test('Color for undefined resource should be undefined', function(assert) 
     this.createInstance(resourceData);
     const done = assert.async();
 
-    getResourceColor(this.instance.getResources(), this.instance.resourceLoaderMap, 'ownerId', 777).done(function(color) {
+    this.instance.getResourceColor('ownerId', 777).done(function(color) {
         assert.strictEqual(color, undefined, 'Color for undefined resource is undefined');
         done();
     });
@@ -513,7 +503,7 @@ QUnit.test('Color for undefined resource should be undefined', function(assert) 
 
 QUnit.test('Get resources by fields', function(assert) {
     this.createInstance(resourceData);
-    const resources = filterResources(this.instance.getResources(), ['ownerId', 'groupId']);
+    const resources = this.instance.getResourcesByFields(['ownerId', 'groupId']);
 
     assert.deepEqual(resources, [resourceData[1]], 'Resources were found');
 });
@@ -524,10 +514,8 @@ QUnit.test('Get resource for painting', function(assert) {
         { field: 'ownerId' }
     ]);
 
-    const resources = this.instance.getResources();
-
-    assert.equal(getPaintedResources(resources).field, 'ownerId', 'Resource is right');
-    assert.equal(getPaintedResources(resources, []).field, 'ownerId', 'Resource is right');
+    assert.equal(this.instance.getResourceForPainting().field, 'ownerId', 'Resource is right');
+    assert.equal(this.instance.getResourceForPainting([]).field, 'ownerId', 'Resource is right');
 });
 
 QUnit.test('Get resource for painting by group', function(assert) {
@@ -537,9 +525,7 @@ QUnit.test('Get resource for painting by group', function(assert) {
         { field: 'managerId' }
     ]);
 
-    const resources = this.instance.getResources();
-
-    assert.equal(getPaintedResources(resources, ['ownerId', 'roomId']).field, 'roomId', 'Resource is right');
+    assert.equal(this.instance.getResourceForPainting(['ownerId', 'roomId']).field, 'roomId', 'Resource is right');
 });
 
 QUnit.test('Get resource for painting by the \'useColorAsDefault\' field', function(assert) {
@@ -550,10 +536,8 @@ QUnit.test('Get resource for painting by the \'useColorAsDefault\' field', funct
         { field: 'groupId', useColorAsDefault: true }
     ]);
 
-    const resources = this.instance.getResources();
-
-    assert.equal(getPaintedResources(resources).field, 'managerId', 'Resource is right');
-    assert.equal(getPaintedResources(resources, ['ownerId', 'roomId']).field, 'managerId', 'Resource is right');
+    assert.equal(this.instance.getResourceForPainting().field, 'managerId', 'Resource is right');
+    assert.equal(this.instance.getResourceForPainting(['ownerId', 'roomId']).field, 'managerId', 'Resource is right');
 });
 
 QUnit.test('Get appointments by certain resources', function(assert) {
@@ -739,7 +723,7 @@ QUnit.test('Resource data should be loaded correctly is data source is config ob
 
     const done = assert.async();
 
-    getOrLoadResourceItem(this.instance.getResources(), this.instance.resourceLoaderMap, 'ownerId', 1).done(function(result) {
+    this.instance.getResourceDataByValue('ownerId', 1).done(function(result) {
         assert.deepEqual(result, {
             id: 1
         }, 'Resource data is right');
@@ -766,7 +750,7 @@ QUnit.test('Resource data should be loaded correctly is data source is string', 
 
     const done = assert.async();
 
-    getOrLoadResourceItem(this.instance.getResources(), this.instance.resourceLoaderMap, 'ownerId', 1).done(function(result) {
+    this.instance.getResourceDataByValue('ownerId', 1).done(function(result) {
         assert.deepEqual(result, {
             id: 1
         }, 'Resource data is right');
@@ -795,11 +779,11 @@ QUnit.test('Load should be called once for several resources', function(assert) 
     }]
     );
 
-    getOrLoadResourceItem(this.instance.getResources(), this.instance.resourceLoaderMap, 'ownerId', 1).done(function(res) {
+    this.instance.getResourceDataByValue('ownerId', 1).done(function(res) {
         assert.deepEqual(res, { text: 'o1', id: 1 }, 'Resource data is right');
     });
-    getOrLoadResourceItem(this.instance.getResources(), this.instance.resourceLoaderMap, 'ownerId', 2);
-    getOrLoadResourceItem(this.instance.getResources(), this.instance.resourceLoaderMap, 'ownerId', 1);
+    this.instance.getResourceDataByValue('ownerId', 2);
+    this.instance.getResourceDataByValue('ownerId', 1);
 
     deferred.resolve([{ text: 'o1', id: 1 }, { text: 'o2', id: 2 }]);
 

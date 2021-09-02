@@ -1,8 +1,10 @@
 import { wrapToArray, inArray } from '../../../core/utils/array';
+import { grep } from '../../../core/utils/common';
 import { isDefined } from '../../../core/utils/type';
 import { deepExtendArraySafe } from '../../../core/utils/object';
 import { each } from '../../../core/utils/iterator';
 import { extend } from '../../../core/utils/extend';
+import query from '../../../data/query';
 import { compileGetter, compileSetter } from '../../../core/utils/data';
 import { when, Deferred } from '../../../core/utils/deferred';
 
@@ -14,16 +16,12 @@ import {
     getFieldExpr,
     getValueExpr,
     getWrappedDataSource,
-    getResourceColor,
-    isResourceMultiple,
-    filterResources,
-    getPaintedResources
 } from './utils';
 
 export class ResourceManager {
     constructor(resources) {
         this.loadedResources = [];
-        this.resourceLoaderMap = new Map();
+        this._resourceLoader = {};
         this._dataAccessors = {
             getter: {},
             setter: {}
@@ -31,6 +29,20 @@ export class ResourceManager {
         this.agendaProcessor = new AgendaResourceProcessor();
 
         this.setResources(resources);
+    }
+
+    _isMultipleResource(resourceField) {
+        let result = false;
+
+        each(this.getResources(), (function(_, resource) {
+            const field = getFieldExpr(resource);
+            if(field === resourceField) {
+                result = resource.allowMultiple;
+                return false;
+            }
+        }).bind(this));
+
+        return result;
     }
 
     getDataAccessors(field, type) {
@@ -47,7 +59,6 @@ export class ResourceManager {
 
     setResources(resources = []) {
         this._resources = resources;
-        this.resourceLoaderMap = new Map();
         this._dataAccessors = {
             getter: {},
             setter: {}
@@ -69,19 +80,90 @@ export class ResourceManager {
         return this._resources || [];
     }
 
+    getEditors() { // TODO used in Form
+        return this.getResources().map(resource => {
+            const dataField = getFieldExpr(resource);
+            const dataSource = this._getResourceDataByField(dataField);
+
+            return {
+                editorOptions: {
+                    dataSource: dataSource.length ? dataSource : getWrappedDataSource(resource.dataSource),
+                    displayExpr: getDisplayExpr(resource),
+                    valueExpr: getValueExpr(resource)
+                },
+                dataField,
+                editorType: resource.allowMultiple ? 'dxTagBox' : 'dxSelectBox',
+                label: { text: resource.label || dataField }
+            };
+        });
+    }
+
+    // getEditors() { // TODO sketch of new implementation of getEditors method
+    //     return this.getResources().map(resource => {
+    //         const dataField = getFieldExpr(resource);
+    //         const dataSource = this._getResourceDataByField(dataField);
+
+    //         return {
+    //             allowMultiple: resource.allowMultiple,
+    //             label: resource.label,
+    //             dataSource: dataSource.length ? dataSource : getWrappedDataSource(resource.dataSource),
+    //             displayExpr: getDisplayExpr(resource),
+    //             valueExpr: getValueExpr(resource),
+    //             dataField
+    //         };
+    //     });
+    // }
+
+    getResourceDataByValue(field, value) {
+        const result = new Deferred();
+
+        this.getResources().forEach(resource => {
+            const resourceField = getFieldExpr(resource);
+
+            if(resourceField === field) {
+                const dataSource = getWrappedDataSource(resource.dataSource);
+                const valueExpr = getValueExpr(resource);
+
+                if(!this._resourceLoader[field]) {
+                    this._resourceLoader[field] = dataSource.load();
+                }
+
+                this._resourceLoader[field]
+                    .done(data => {
+                        const filteredData = query(data)
+                            .filter(valueExpr, value)
+                            .toArray();
+
+                        delete this._resourceLoader[field];
+                        result.resolve(filteredData[0]);
+                    })
+                    .fail(() => {
+                        delete this._resourceLoader[field];
+                        result.reject();
+                    });
+            }
+        });
+
+        return result.promise();
+    }
+
     setResourcesToItem(itemData, resources) {
         const resourcesSetter = this._dataAccessors.setter;
 
         for(const name in resources) {
             if(Object.prototype.hasOwnProperty.call(resources, name)) {
                 const resourceData = resources[name];
-                resourcesSetter[name](itemData, isResourceMultiple(this.getResources(), name) ? wrapToArray(resourceData) : resourceData);
+                resourcesSetter[name](itemData, this._isMultipleResource(name) ? wrapToArray(resourceData) : resourceData);
             }
         }
     }
 
-    getResourcesFromItem(itemData, wrapOnlyMultipleResources = false) {
+    getResourcesFromItem(itemData, wrapOnlyMultipleResources) { // TODO used in Popup
         let result = null;
+
+        if(!isDefined(wrapOnlyMultipleResources)) {
+            wrapOnlyMultipleResources = false;
+        }
 
         this._resourceFields.forEach(field => {
             each(itemData, (fieldName, fieldValue) => {
@@ -96,7 +178,7 @@ export class ResourceManager {
                     if(resourceData.length === 1) {
                         resourceData = resourceData[0];
                     }
-                    if(!wrapOnlyMultipleResources || (wrapOnlyMultipleResources && isResourceMultiple(this.getResources(), field))) {
+                    if(!wrapOnlyMultipleResources || (wrapOnlyMultipleResources && this._isMultipleResource(field))) {
                         this.getDataAccessors(field, 'setter')(tempObject, wrapToArray(resourceData));
                     } else {
                         this.getDataAccessors(field, 'setter')(tempObject, resourceData);
@@ -134,20 +216,18 @@ export class ResourceManager {
         });
     }
 
-    loadResources(groups = []) {
+    loadResources(groups) {
         const result = new Deferred();
         const deferreds = [];
 
-        filterResources(this.getResources(), groups)
+        this.getResourcesByFields(groups)
             .forEach(resource => {
                 const deferred = new Deferred();
                 const name = getFieldExpr(resource);
                 deferreds.push(deferred);
 
-                const dataSourcePromise = getWrappedDataSource(resource.dataSource).load();
-                this.resourceLoaderMap.set(name, dataSourcePromise);
-
-                dataSourcePromise
+                getWrappedDataSource(resource.dataSource)
+                    .load()
                     .done(data => {
                         const items = this._mapResourceData(resource, data);
 
@@ -172,6 +252,74 @@ export class ResourceManager {
         return result.promise();
     }
 
+    getResourcesByFields(fields) {
+        return grep(this.getResources(), (function(resource) {
+            const field = getFieldExpr(resource);
+            return inArray(field, fields) > -1;
+        }).bind(this));
+    }
+
+    getResourceByField(field) {
+        return this.getResourcesByFields([field])[0] || {};
+    }
+
+    getResourceColor(field, value) {
+        const valueExpr = this.getResourceByField(field).valueExpr || 'id';
+        const valueGetter = compileGetter(valueExpr);
+        const colorExpr = this.getResourceByField(field).colorExpr || 'color';
+        const colorGetter = compileGetter(colorExpr);
+
+        const result = new Deferred();
+        const resourceData = this._getResourceDataByField(field);
+        const resourceDataLength = resourceData.length;
+        let color;
+
+        if(resourceDataLength) {
+            for(let i = 0; i < resourceDataLength; i++) {
+                if(valueGetter(resourceData[i]) === value) {
+                    color = colorGetter(resourceData[i]);
+                    break;
+                }
+            }
+            result.resolve(color);
+        } else {
+            this.getResourceDataByValue(field, value)
+                .done(function(resourceData) {
+                    if(resourceData) {
+                        color = colorGetter(resourceData);
+                    }
+
+                    result.resolve(color);
+                })
+                .fail(function() {
+                    result.reject();
+                });
+        }
+
+        return result.promise();
+    }
+
+    getResourceForPainting(groups) {
+        let resources = this.getResources();
+        let result;
+
+        each(resources, function(index, resource) {
+            if(resource.useColorAsDefault) {
+                result = resource;
+                return false;
+            }
+        });
+
+        if(!result) {
+            if(Array.isArray(groups) && groups.length) {
+                resources = this.getResourcesByFields(groups);
+            }
+            result = resources[resources.length - 1];
+        }
+
+        return result;
+    }
+
     _hasGroupItem(appointmentResources, groupName, itemValue) {
         const group = this.getDataAccessors(groupName, 'getter')(appointmentResources);
 
@@ -185,6 +333,17 @@ export class ResourceManager {
 
     _createPlainResourcesByAppointmentAsync(rawAppointment) {
         return this.agendaProcessor.createListAsync(rawAppointment);
+    }
+
+    _getResourceDataByField(fieldName) {
+        for(let i = 0; i < this.loadedResources.length; i++) {
+            const resource = this.loadedResources[i];
+            if(resource.name === fieldName) {
+                return resource.data;
+            }
+        }
+
+        return [];
     }
 
     getResourceTreeLeaves(tree, appointmentResources, result) {
@@ -259,16 +418,23 @@ export class ResourceManager {
         return result;
     }
 
-    getAppointmentColor({ groupIndex, itemData, groups }) {
-        const paintedResources = getPaintedResources(this.getResources(), groups);
+    getAppointmentColor(options) {
+        const { groups } = options;
+        const resourceForPainting = this.getResourceForPainting(groups);
+        let response = new Deferred().resolve().promise();
 
-        if(paintedResources) {
-            const field = getFieldExpr(paintedResources);
-
+        if(resourceForPainting) {
+            const field = getFieldExpr(resourceForPainting);
+            const {
+                groupIndex,
+                itemData
+            } = options;
             const cellGroups = getCellGroups(groupIndex, this.loadedResources);
             const resourceValues = wrapToArray(this.getDataAccessors(field, 'getter')(itemData));
 
-            let groupId = resourceValues[0];
+            let groupId = resourceValues.length
+                ? resourceValues[0]
+                : undefined;
 
             for(let i = 0; i < cellGroups.length; i++) {
                 if(cellGroups[i].name === field) {
@@ -277,10 +443,10 @@ export class ResourceManager {
                 }
             }
 
-            return getResourceColor(this.getResources(), this.resourceLoaderMap, field, groupId);
+            response = this.getResourceColor(field, groupId);
         }
 
-        return new Deferred().resolve().promise();
+        return response;
     }
 
     reduceResourcesTree(tree, existingAppointments, _result) {
@@ -359,7 +525,7 @@ export class ResourceManager {
                 name: resourceName
             } = currentResource;
 
-            const resource = filterResources(this.getResources(), [resourceName])[0] || {};
+            const resource = this.getResourceByField(resourceName);
             const valueExpr = getValueExpr(resource);
             const filteredItems = [];
             const filteredData = [];
