@@ -104,6 +104,7 @@ class FilterMaker {
 export class AppointmentFilterBaseStrategy {
     constructor(options) {
         this.options = options;
+        this.dataSource = this.options.dataSource;
         this.dataAccessors = this.options.dataAccessors;
 
         this._init();
@@ -266,12 +267,7 @@ export class AppointmentFilterBaseStrategy {
                 }
             }
 
-            const appointmentTakesAllDay = getAppointmentTakesAllDay(
-                appointment,
-                viewStartDayHour,
-                viewEndDayHour,
-                this.allDayPanelMode,
-            );
+            const appointmentTakesAllDay = getAppointmentTakesAllDay(appointment, viewStartDayHour, viewEndDayHour);
             const appointmentTakesSeveralDays = getAppointmentTakesSeveralDays(appointment);
             const isAllDay = appointment.allDay;
             const isLongAppointment = appointmentTakesSeveralDays || appointmentTakesAllDay;
